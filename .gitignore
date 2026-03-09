@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+.env
+build/
+dist/
+.finance-news-bot-sender/
+sender-agent.log
+sender-agent.sqlite3
+.claude/
+*.tgz
+tmp_alembic_test.db

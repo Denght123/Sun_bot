@@ -1,0 +1,68 @@
+[
+  {
+    "source_platform": "cls",
+    "source_type": "news",
+    "external_id": "1001",
+    "title": "央行：继续实施适度宽松的货币政策",
+    "summary": "支持资本市场稳定发展，保持流动性合理充裕。",
+    "url": "https://www.cls.cn/detail/1001",
+    "fallback_url": "https://www.cls.cn/detail/1001",
+    "published_at": "2026-03-06T19:15:00+08:00",
+    "collected_at": "2026-03-07T07:20:00+08:00",
+    "raw_payload": {
+      "provider": "cls",
+      "source_weight": "3.50"
+    }
+  },
+  {
+    "source_platform": "baidu",
+    "source_type": "hotsearch",
+    "external_id": "央行回应降准降息节奏",
+    "title": "央行回应降准降息节奏",
+    "summary": "货币政策工具和流动性安排受到市场关注。",
+    "url": "https://www.baidu.com/s?wd=%E5%A4%AE%E8%A1%8C%E5%9B%9E%E5%BA%94%E9%99%8D%E5%87%86%E9%99%8D%E6%81%AF%E8%8A%82%E5%A5%8F",
+    "fallback_url": "https://www.baidu.com/s?wd=%E5%A4%AE%E8%A1%8C%E5%9B%9E%E5%BA%94%E9%99%8D%E5%87%86%E9%99%8D%E6%81%AF%E8%8A%82%E5%A5%8F",
+    "published_at": null,
+    "collected_at": "2026-03-07T07:20:00+08:00",
+    "raw_payload": {
+      "provider": "baidu",
+      "tag": "财经",
+      "heat_score": 9823456,
+      "source_weight": "1.20"
+    }
+  },
+  {
+    "source_platform": "baidu",
+    "source_type": "hotsearch",
+    "external_id": "AI服务器订单大增",
+    "title": "AI服务器订单大增",
+    "summary": "多家产业链公司披露新订单与资本开支计划。",
+    "url": "https://www.baidu.com/s?wd=AI%E6%9C%8D%E5%8A%A1%E5%99%A8%E8%AE%A2%E5%8D%95%E5%A4%A7%E5%A2%9E",
+    "fallback_url": "https://www.baidu.com/s?wd=AI%E6%9C%8D%E5%8A%A1%E5%99%A8%E8%AE%A2%E5%8D%95%E5%A4%A7%E5%A2%9E",
+    "published_at": null,
+    "collected_at": "2026-03-07T07:20:00+08:00",
+    "raw_payload": {
+      "provider": "baidu",
+      "tag": "热议",
+      "heat_score": 6450000,
+      "source_weight": "1.20"
+    }
+  },
+  {
+    "source_platform": "baidu",
+    "source_type": "hotsearch",
+    "external_id": "某综艺总决赛",
+    "title": "某综艺总决赛",
+    "summary": "娱乐话题冲上热搜。",
+    "url": "https://www.baidu.com/s?wd=%E6%9F%90%E7%BB%BC%E8%89%BA%E6%80%BB%E5%86%B3%E8%B5%9B",
+    "fallback_url": "https://www.baidu.com/s?wd=%E6%9F%90%E7%BB%BC%E8%89%BA%E6%80%BB%E5%86%B3%E8%B5%9B",
+    "published_at": null,
+    "collected_at": "2026-03-07T07:20:00+08:00",
+    "raw_payload": {
+      "provider": "baidu",
+      "tag": "娱乐",
+      "heat_score": 8888888,
+      "source_weight": "1.20"
+    }
+  }
+]

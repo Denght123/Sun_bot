@@ -1,74 +1,83 @@
 # 技术设计文档 TECH_DESIGN
 
 ## 1. 文档目的
-本文基于当前 PRD《基金理财热点消息机器人（个人微信测试版）》进行技术落地设计，目标是让研发可以据此开始系统拆分、接口设计、部署实施与联调测试。
 
-本文聚焦 MVP 版本，不讨论个性化推荐、实时问答、多租户权限体系等后续能力。
+本文用于统一当前仓库的技术口径，避免后续分支继续沿着“Windows sender-agent + 本地微信自动化是默认主链路”的旧叙述推进。
+
+本分支只做两类事情：
+
+- 统一架构文档与运行说明
+- 扩展环境变量配置契约
+
+本分支**不**实现企业微信实际发送逻辑，也**不**改动现有 dispatch / scheduler / sender-agent 运行行为。
 
 ---
 
-## 2. PRD摘要
+## 2. 当前状态与目标架构
 
-### 2.1 产品目标
-构建一个每日自动运行的财经资讯机器人，抓取多平台热点信息，经过规则筛选与大模型摘要后，在每天 08:00 通过个人微信向用户推送统一的财经早报。
+### 2.1 当前代码现状
+当前仓库仍保留以下 sender-oriented 能力：
 
-### 2.2 MVP范围
-- 每日一次固定推送，时间为北京时间 08:00
-- 推送统一内容，当前为单用户测试，后续支持多人统一广播
-- 输出精简版日报，阅读时长控制在 3-5 分钟
-- 支持关键词菜单交互：功能 / 早报 / 板块 / 政策 / 国际 / 热搜 / 风险
-- 大模型只用于后台批处理，不提供用户实时问答
+- sender heartbeat / pending task polling / result callback API
+- sender online / degraded / `waiting_sender` 相关状态语义
+- Windows sender-agent 运行代码
+- 本地微信自动化兼容链路
 
-### 2.3 内容范围
-数据源包括：
-- 抖音热榜、微博热搜、知乎热榜、B站热榜、百度热搜
-- 财联社、凤凰网财经、今日头条财经
+这些能力在当前代码中依然有效，因此本次文档切换不能把 sender-agent 写成“已废弃”或“已移除”。
 
-筛选原则：
-- 仅保留与财经、政策、行业、资本市场直接相关内容
-- 泛娱乐热点不进入日报正文
+### 2.2 当前默认部署形态
+默认部署已经是 **backend-only**，仓库中的 [docker-compose.yml](docker-compose.yml) 与 [Dockerfile](Dockerfile) 只覆盖：
 
-固定输出模块：
-1. 今日总览（3-5条）
-2. Top10 热门财经板块（行业赛道口径）
-3. Top10 国内政策与监管动态
-4. Top10 国际事件与海外市场影响
-5. 今日风险提示（2-3条）
-6. 热搜汇总（仅财经相关热点，供关键词查询）
+- `api-service`
+- `scheduler-service`
+- `postgres`
+- `redis`
 
-### 2.4 关键约束
-- 日报统计窗口：前一日 18:00 ~ 当日 07:30
-- 默认推送完整精简版
-- 总阅读长度约 1200-1800 字
-- 微信总推送不超过 6 条消息
-- 每条核心消息需带来源链接；原文直链不可用时允许使用落地页或搜索页
-- 推送失败自动重试 3 次，仍失败则告警给用户本人
+也就是说，默认部署层面并不要求与仓库一起常驻一台 Windows 发信机。
 
-### 2.5 非目标范围
-- 周报/月报
-- 个性化推荐
-- 用户基金池持仓分析
-- 用户实时问答式大模型分析
-- A股/基金独立新增命令
+### 2.3 目标发送口径
+本分支需要把默认架构口径统一为：
+
+- **主发送方向：backend -> WeCom app messaging**
+- **legacy fallback：backend -> dispatch task -> sender-agent -> local WeChat automation**
+
+说明：这里的“主发送方向”是本分支要确立的**架构方向与 env 契约**，不是说企业微信发送已经在本分支落地完成。
+
+### 2.4 与其他设计文档的关系
+本分支不深改 [API_SPEC.md](API_SPEC.md)、[DB_DESIGN.md](DB_DESIGN.md)、[PRD(基金理财热点消息机器人).md](PRD(基金理财热点消息机器人).md)。
+
+因此需要接受一个事实：
+
+- 这些文档仍更多反映当前 sender-oriented 实现现实
+- 本文负责明确新的默认部署口径与未来主发送方向
 
 ---
 
 ## 3. 总体设计原则
-1. **云端负责重任务，终端负责发信**
-   - 阿里云 ECS 负责抓取、处理、摘要、调度
-   - Windows 发信端负责维持个人微信登录态并真正发出消息
 
-2. **MVP优先稳定，不追求过度复杂**
-   - 调度采用 APScheduler 作为默认方案
-   - 保留后续切换 Celery 的扩展空间
+1. **默认部署后端优先**
+   - 默认运行节点以 ECS 上的后端服务为主
+   - Docker 默认编排不依赖 Windows 机器常驻
 
-3. **规则优先，LLM兜底增强**
-   - 先规则去重、聚类、筛选，再调用大模型做摘要
+2. **主发送方向切换为企业微信应用消息**
+   - 后端直接调用企业微信应用消息接口，适合作为统一广播主路径
+   - 收件对象、发送凭据、回调参数等通过后端 env 契约管理
+
+3. **保留 sender-agent 作为 legacy fallback**
+   - 当前 sender-agent 代码、API 与状态模型继续保留
+   - 用于 fallback / rollback / 特殊场景或兼容已有自动化链路
+
+4. **文档真实反映代码边界**
+   - 不能把未来方向写成“已经实现”
+   - 不能把当前 sender-oriented 运行逻辑伪装成“已经 transport-agnostic”
+
+5. **规则优先，LLM 兜底增强**
+   - 先规则去重、聚类、筛选，再调用大模型摘要
    - 模型失败时允许降级为规则模板版日报
 
-4. **统一日报，不做个性化生成**
-   - 所有用户接收同一份日报文本
-   - 降低 token 成本与运行复杂度
+6. **统一日报，不做个性化生成**
+   - 所有接收端默认接收同一份日报文本
+   - 降低复杂度与运维成本
 
 ---
 
@@ -90,8 +99,13 @@
                    │ PostgreSQL / Redis       │
                    └───────────┬──────────────┘
                                │
-                               │ HTTP / Polling / Heartbeat
-                               │
+                     Primary   │   Legacy fallback
+                     path      │
+              ┌────────────────▼───────────────┐
+              │ WeCom app messaging            │
+              │ (follow-up implementation)     │
+              └────────────────┬───────────────┘
+                               │ optional fallback
                    ┌───────────▼──────────────┐
                    │ Windows 发信端           │
                    │──────────────────────────│
@@ -103,12 +117,13 @@
 
 ### 4.2 架构职责划分
 
-| 节点 | 职责 |
-|---|---|
-| 阿里云 ECS | 数据抓取、清洗、聚类、LLM摘要、日报生成、任务调度、发送任务下发、状态监控、告警 |
-| Windows 发信端 | 微信登录态维护、执行消息发送、发送结果回传、心跳上报 |
-| PostgreSQL | 原始数据、聚类事件、日报结果、发送记录、失败记录 |
-| Redis | 缓存、去重辅助、短期任务状态 |
+| 节点 | 角色 | 当前状态 |
+|---|---|---|
+| 阿里云 ECS | 数据抓取、清洗、聚类、LLM 摘要、日报生成、任务调度、状态管理 | 已存在 |
+| WeCom app messaging | 默认主发送方向 | 本分支只建立架构口径与 env 契约，实际发送实现留待后续 |
+| Windows 发信端 | legacy fallback，负责本地微信自动化发送 | 已存在运行代码 |
+| PostgreSQL | 原始数据、日报结果、dispatch task、sender 状态 | 已存在 |
+| Redis | 缓存、短期状态、调度辅助 | 已存在 |
 
 ---
 
@@ -119,11 +134,6 @@
 - 按平台抓取热点榜单与财经媒体内容
 - 统一抽取标题、摘要、链接、来源、时间、标签、抓取时间
 - 对源站失败、结构变化、超时进行容错记录
-
-建议子模块：
-- social_collectors：抖音 / 微博 / 知乎 / B站 / 百度
-- finance_collectors：财联社 / 凤凰财经 / 今日头条财经
-- parser_normalizer：字段清洗与标准化
 
 输出：标准化原始内容列表。
 
@@ -155,14 +165,6 @@
 - 生成链接集合
 - 控制文本总长度与拆分段落数
 
-输出对象：
-- daily_brief_full
-- sector_detail
-- policy_detail
-- international_detail
-- hot_topics_detail
-- risk_detail
-
 ### 5.5 Scheduler 调度模块
 职责：
 - 每日定时触发抓取、分析、摘要、发送流程
@@ -173,305 +175,305 @@
 - T-1 18:00 ~ T 07:30：数据采集窗口
 - 07:30 ~ 07:45：规则处理
 - 07:45 ~ 07:55：LLM 摘要
-- 08:00：创建并下发发送任务
+- 08:00：创建并触发发送
 
-### 5.6 Dispatch Service 任务下发模块
+### 5.6 Dispatch Service 任务编排模块
 职责：
-- 将日报发送任务写入任务表
-- 检查发信端在线状态
-- 向 Windows 发信端下发待发送内容
-- 接收发送结果并更新任务状态
+- 统一创建 dispatch task 与任务状态
+- 管理发送重试与失败状态
+- 在 legacy fallback 场景下继续服务 sender-agent polling / callback
 
-### 5.7 Sender Agent 发信端模块
+说明：当前代码中的 dispatch 仍然是 sender-oriented；本分支不改其运行逻辑，只调整文档语义与未来 provider 合同。
+
+### 5.7 WeCom Delivery（后续分支实现）
+职责将包括：
+- access token 获取与刷新
+- 企业微信应用消息发送
+- 主发送结果回写
+- 如启用则处理回调验签与状态联动
+
+本分支仅定义其配置契约，不新增运行代码。
+
+### 5.8 Sender Agent legacy fallback 模块
 职责：
-- 轮询或接收云端待发送任务
-- 调起微信自动化执行推送
+- 轮询云端待发送任务
+- 调起本地微信自动化执行推送
 - 回传发送成功 / 失败 / 错误信息
 - 定期上报心跳与登录状态
+
+定位说明：
+- 它仍是当前代码中真实可运行的兼容路径
+- 但不再是默认部署的前提，也不再是文档中的默认主链路
 
 ---
 
 ## 6. 端到端业务流程
 
-### 6.1 每日自动流程
+### 6.1 默认每日自动流程（目标主路径）
 1. Scheduler 在阿里云 ECS 上按北京时间运行。
 2. Collector 按预设时间窗口收集多源内容。
 3. Rule Engine 完成去重、聚类、财经相关性过滤、标签归类。
 4. LLM Summarizer 生成统一日报摘要。
 5. Report Generator 产出完整日报及关键词详情内容。
-6. Dispatch Service 检查发信端心跳是否正常。
-7. 若发信端在线，则下发发送任务。
-8. Windows 发信端执行微信发送。
-9. 发送结果回传云端并记录。
-10. 若失败，则自动重试最多 3 次；仍失败则告警。
+6. Dispatch Service 创建发送任务与状态记录。
+7. 后端通过 WeCom app messaging 发送日报。
+8. 发送结果写回后端状态。
+9. 若失败，则按后续分支定义的主路径重试 / 告警逻辑处理。
 
-### 6.2 用户交互流程
-1. 用户在微信收到 08:00 日报。
-2. 用户回复 `功能`。
-3. 发信端将消息转发给云端或调用关键词查询接口。
-4. 云端返回菜单或对应模块内容。
-5. 发信端再通过微信发送给用户。
+说明：第 7-9 步是本分支要确立的默认方向，具体实现仍需后续分支完成。
 
----
+### 6.2 legacy fallback 自动流程
+当系统显式配置为 fallback 模式，或进行回滚 / 演练时：
 
-## 7. 核心数据设计
+1. Scheduler 与日报生成链路保持不变。
+2. Dispatch Service 创建 dispatch task。
+3. 若存在健康 sender，则任务进入 `pending` 并由 sender-agent 轮询获取。
+4. Windows sender-agent 调起本地微信自动化发送。
+5. sender-agent 回传结果，后端更新任务状态。
+6. 若 sender 离线，则任务进入 `waiting_sender`。
 
-### 7.1 建议数据表
-
-#### raw_items
-存储抓取后的标准化原始内容。
-
-建议字段：
-- id
-- source_platform
-- title
-- summary
-- url
-- published_at
-- collected_at
-- raw_payload
-- is_finance_related
-
-#### clustered_events
-存储去重聚类后的事件。
-
-建议字段：
-- id
-- event_key
-- title
-- merged_sources
-- category
-- importance_score
-- first_seen_at
-- last_seen_at
-
-#### daily_reports
-存储每日生成结果。
-
-建议字段：
-- id
-- report_date
-- overview_content
-- sector_content
-- policy_content
-- international_content
-- hot_topics_content
-- risk_content
-- link_bundle
-- full_text
-- generation_status
-- fallback_used
-- created_at
-
-#### dispatch_tasks
-存储发送任务。
-
-建议字段：
-- id
-- report_date
-- target_type
-- payload
-- status
-- retry_count
-- last_error
-- scheduled_at
-- sent_at
-- updated_at
-
-#### sender_heartbeats
-存储发信端状态。
-
-建议字段：
-- id
-- sender_id
-- status
-- wechat_login_status
-- last_heartbeat_at
-- client_version
+### 6.3 用户交互流程说明
+关键词交互、菜单查询与模块返回能力仍可继续沿用当前 sender-oriented 兼容链路；是否迁移到企业微信交互方式，留待后续实现分支决定。
 
 ---
 
-## 8. 云端与发信端接口设计
+## 7. 当前数据与接口边界
 
-### 8.1 建议通信方式
-MVP 推荐：
-- Windows 发信端主动轮询阿里云接口拉取待发送任务
-- 同时定时发送心跳
+### 7.1 数据层边界
+当前 schema 仍保留 sender-related 数据概念，例如：
+
+- `dispatch_tasks`
+- `senders`
+- `sender_heartbeats`
+
+这说明当前运行现实仍然支持 sender fallback；本分支不对数据模型做 transport-agnostic 重构。
+
+### 7.2 API 边界
+当前运行中的 sender-related API 仍然有效，包括：
+
+- `/api/sender/heartbeat`
+- `/api/sender/tasks/pending`
+- `/api/sender/tasks/{task_id}/result`
+- `/api/sender/events`
+
+这些接口在本分支中应被理解为：
+- 当前兼容路径接口
+- fallback / rollback 支撑能力
+- 不是默认主发送方向的长期唯一形态
+
+### 7.3 主路径接口状态
+企业微信主路径在本分支中只有 env 契约，没有新增 API / service 运行实现。
+
+---
+
+## 8. 配置与部署设计
+
+### 8.1 默认部署
+推荐的默认部署要素：
+
+- `api-service`
+- `scheduler-service`
+- `postgres`
+- `redis`
+- 企业微信发送所需凭据
+
+这与当前 [docker-compose.yml](docker-compose.yml) 和 [Dockerfile](Dockerfile) 保持一致。
+
+### 8.2 环境变量分组
+后端配置建议分为四组：
+
+1. 基础应用配置
+2. 调度 / dispatch 核心配置
+3. 企业微信主路径配置
+4. legacy sender-agent fallback 配置
+
+### 8.3 企业微信主路径配置
+本分支会建立但不消费以下配置契约：
+
+- `DISPATCH_PROVIDER`
+- `DISPATCH_EXECUTION_MODE`
+- `WECOM_*`
+
+这些变量在本分支中的意义是：
+- 明确未来主发送方向
+- 稳定 env key 契约
+- 为后续发送 service 接入做准备
+
+它们**不**意味着本分支已经具备企业微信发送能力。
+
+### 8.4 legacy sender-agent fallback 配置
+以下配置仍需保留：
+
+- `DISPATCH_DEFAULT_TARGET_USER`
+- `SENDER_ONLINE_THRESHOLD_SECONDS`
+- `SENDER_DEGRADED_THRESHOLD_SECONDS`
+- `SENDER_NEXT_HEARTBEAT_SECONDS`
+- `SENDER_API_BASE_URL`
+- `SENDER_ID`
+- 所有 `SENDER_*`
+- 所有 `WECHAT_*`
 
 原因：
-- 实现简单
-- 更适合 NAT / 家庭网络环境
-- 降低云端直接连接本地机器的复杂度
+- 当前 dispatch / sender status 逻辑仍依赖这些字段
+- [src/sender_agent/config.py](src/sender_agent/config.py) 仍将 `SENDER_API_BASE_URL`、`SENDER_TOKEN`、`SENDER_ID` 视为必需配置
 
-### 8.2 建议接口
-
-#### 1）发信端心跳上报
-`POST /api/sender/heartbeat`
-
-请求体建议字段：
-- sender_id
-- status
-- wechat_login_status
-- timestamp
-
-#### 2）拉取待发送任务
-`GET /api/sender/tasks/pending?sender_id=xxx`
-
-返回：
-- task_id
-- message_chunks
-- target_user
-- send_type
-
-#### 3）回传发送结果
-`POST /api/sender/tasks/{task_id}/result`
-
-请求体建议字段：
-- success
-- error_message
-- sent_at
-- retryable
-
-#### 4）手动补跑日报
-`POST /api/admin/report/run`
-
-用途：
-- 手动测试
-- 故障恢复
-- 补发当日日报
-
----
-
-## 9. 调度与启动设计
-
-### 9.1 阿里云 ECS 启动方式
-推荐：
-- 使用 Docker Compose 启动服务
-- 容器配置自动重启策略 `unless-stopped`
-- 服务器重启后自动恢复 FastAPI、Scheduler、数据库依赖服务
-
-云端常驻服务包括：
-- api-service
-- scheduler-service
-- postgres
-- redis
-- optional-nginx
-
-### 9.2 Windows 发信端启动方式
-推荐：
-- 发信程序设置为系统开机自启动
-- 个人微信保持登录态
-- 开机后自动启动 Sender Agent
-- 周期性心跳上报云端
-
-### 9.3 时区与时间配置
+### 8.5 时区与时间配置
 - ECS 使用北京时间
-- 所有任务调度、日志展示、日报日期统一基于 Asia/Shanghai
-- Windows 发信端也统一使用北京时间，避免发送时间偏差
+- 所有任务调度、日志展示、日报日期统一基于 `Asia/Shanghai`
+- legacy sender-agent fallback 场景也继续使用北京时间，避免发送时间偏差
 
 ---
 
-## 10. 重试、告警与降级策略
+## 9. 重试、告警与降级策略
 
-### 10.1 抓取失败
+### 9.1 抓取失败
 - 单个平台失败不阻断全局流程
 - 记录错误日志
 - 平台异常在日报中不单独暴露给用户
 
-### 10.2 LLM失败
+### 9.2 LLM 失败
 - 自动降级为规则模板版日报
 - 标记 `fallback_used = true`
 - 仍允许日报继续发送
 
-### 10.3 发信失败
-- 自动重试最多 3 次
-- 可重试场景：接口失败、发信端短时异常、微信窗口未就绪
-- 不可重试场景：持续掉线、登录失效、明确权限问题
-- 3 次失败后立即告警给用户本人
+### 9.3 主发送路径失败（后续实现）
+默认主路径切换到企业微信后，后续分支需要把以下能力纳入统一状态流：
 
-### 10.4 发信端离线
-- 云端生成日报但不立即发送
-- 记录任务为 `waiting_sender`
-- 若超过设定时限仍离线，则触发告警
+- WeCom 发送失败重试
+- 主路径失败告警
+- 发送结果回写
+- 如有必要，切换到 legacy fallback
+
+本分支只定义该方向，不实现具体逻辑。
+
+### 9.4 legacy sender fallback 失败
+- sender 心跳异常、未登录或窗口不可用时，可进入 `waiting_sender`
+- `waiting_sender` 仅表示 fallback 发信端暂不可用
+- 它不再是默认主链路不可用时的唯一解释
+
+### 9.5 告警建议
+优先关注：
+- 日报未按时生成
+- 主路径发送失败
+- fallback sender 长时间离线
+- LLM 连续调用失败
+- 重试次数触顶
+
+---
+
+## 10. 启动与运行说明
+
+### 10.1 后端服务启动
+默认通过 Docker Compose 启动：
+
+- API
+- Scheduler
+- PostgreSQL
+- Redis
+
+服务器重启后依赖 `unless-stopped` 自动恢复。
+
+### 10.2 Windows sender-agent 启动
+只有在以下场景才需要：
+
+- fallback 演练
+- 回滚到本地微信自动化
+- 兼容当前 sender-oriented API / task flow
+
+此时才需要：
+- 保持 WeChat Desktop 登录态
+- 启动 sender-agent
+- 周期性 heartbeat / polling / result callback
+
+对应说明见 [src/sender_agent/WINDOWS_RUN_GUIDE.md](src/sender_agent/WINDOWS_RUN_GUIDE.md)。
 
 ---
 
 ## 11. 安全与合规边界
+
 - 仅抓取公开可访问内容，注意平台反爬与合规限制
 - 严格保留免责声明，不输出买卖建议
-- API Key、数据库密码、微信自动化配置均通过环境变量管理
+- API Key、数据库密码、企业微信凭据、sender-agent 配置均通过环境变量管理
 - 阿里云安全组只开放必要端口
-- 如需公网接口，建议后续增加 HTTPS 与鉴权
+- 如需公网接口，建议增加 HTTPS 与鉴权
 
 ---
 
 ## 12. 日志、监控与运维建议
 
 ### 12.1 日志分类
-- collector.log：抓取日志
-- scheduler.log：调度日志
-- llm.log：模型调用日志
-- dispatch.log：任务下发与发送结果日志
-- sender.log：发信端执行日志
+- `collector.log`：抓取日志
+- `scheduler.log`：调度日志
+- `llm.log`：模型调用日志
+- `dispatch.log`：任务下发与发送结果日志
+- `sender.log`：legacy sender-agent 执行日志
 
 ### 12.2 关键监控指标
 - 当日抓取成功的平台数
 - 候选事件数量
 - LLM 调用成功率
 - 当日日报生成状态
-- 发信端最近心跳时间
-- 08:00 推送成功率
+- 默认主路径发送成功率
+- fallback sender 最近心跳时间
 - 重试次数与失败原因
 
 ### 12.3 告警建议
 - 08:00 前日报未生成完成
-- 发信端离线超过阈值
-- 推送 3 次失败
+- 主路径发送失败
+- fallback sender 离线超过阈值
+- 推送重试 3 次失败
 - LLM 连续调用失败
 
 ---
 
-## 13. MVP实施优先级
+## 13. MVP 实施优先级（更新后口径）
 
-### Phase 1：最小可运行链路
-- 完成阿里云 ECS 上的 FastAPI + APScheduler 基础服务
+### Phase 1：后端主链路清晰化
+- 保持阿里云 ECS 上的 FastAPI + APScheduler 基础服务
 - 打通 1-2 个数据源抓取
 - 生成固定模板日报
-- Windows 发信端可接收任务并推送到个人微信
+- 完成 WeCom 主路径所需配置契约
 
-### Phase 2：内容质量提升
+### Phase 2：主发送实现补齐
+- 新增企业微信发送 service
+- 接入 access token 获取 / 刷新
+- 打通 dispatch -> WeCom 主发送路径
+- 把主路径结果纳入重试与状态管理
+
+### Phase 3：内容质量提升
 - 扩展多平台抓取
 - 增强去重、聚类、分类能力
 - 引入 LLM 摘要
 - 优化文本结构与链接质量
 
-### Phase 3：稳定性增强
-- 完善重试机制
-- 增加心跳与健康检查
-- 补充监控与告警
-- 优化补跑能力
+### Phase 4：legacy fallback 与运维增强
+- 保持 sender-agent fallback 可用
+- 演练 rollback / fallback
+- 补充监控、告警、补跑与排障说明
 
 ---
 
 ## 14. 验收映射
-本文设计需满足 PRD 中的核心验收要求：
-- 每日 08:00 自动推送
-- 统一日报文本
-- 总长度 1200-1800 字
-- 消息不超过 6 条
-- 关键词命中率 ≥ 99%
-- 推送失败自动重试 3 次并告警
-- 阿里云 ECS 重启后服务自动恢复
-- Windows 发信端在线时可正常执行发送任务
+
+本文对应的验收重点不再是“sender-agent 作为默认主链路”，而是：
+
+- 默认部署说明与 Docker 编排一致
+- 文档明确 backend-only 是当前默认部署
+- 文档明确 WeCom app messaging 是默认主发送方向
+- 文档明确 sender-agent 是 legacy fallback
+- `.env.example` 与 [src/app/core/config.py](src/app/core/config.py) 的配置契约保持一致
+- 当前 sender-oriented 代码事实没有被文档错误掩盖
 
 ---
 
 ## 15. 结论
-当前 MVP 的最佳技术路线为：
-- 阿里云 ECS 常驻运行核心服务
-- Windows 发信端负责个人微信发送
-- FastAPI + APScheduler 作为默认技术骨架
-- PostgreSQL + Redis 提供存储与状态支持
-- 采用“规则筛选 + LLM摘要 + 失败降级 + 发信重试”的整体方案
 
-该方案复杂度适中，适合当前单用户测试阶段，同时保留后续扩展到多人统一广播的空间。
+当前仓库最合适的统一口径应为：
+
+- 阿里云 ECS 常驻运行核心后端服务
+- 企业微信应用消息是默认主发送方向
+- Windows sender-agent / 本地微信自动化是 legacy fallback
+- FastAPI + APScheduler 继续作为后端骨架
+- PostgreSQL + Redis 提供存储与状态支持
+
+这样既能让文档与现有部署形态一致，也能保留当前 sender-agent 兼容链路，为后续企业微信主路径实现留出清晰边界。
