@@ -8,8 +8,8 @@ BIGINT_PK = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
 JSON_PAYLOAD = sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
 
 # revision identifiers, used by Alembic.
-revision = "004_add_system_events"
-down_revision = "003_add_report_sections"
+revision = "004_system_events"
+down_revision = "003_report_sections"
 branch_labels = None
 depends_on = None
 

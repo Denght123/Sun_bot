@@ -8,8 +8,8 @@ BIGINT_PK = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
 JSON_PAYLOAD = sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
 
 # revision identifiers, used by Alembic.
-revision = "002_add_dispatch_scheduler_tables"
-down_revision = "001_init_collectors_rule_engine"
+revision = "002_dispatch_scheduler"
+down_revision = "001_init_rule_engine"
 branch_labels = None
 depends_on = None
 
